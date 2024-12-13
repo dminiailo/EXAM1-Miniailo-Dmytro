@@ -1,0 +1,129 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
+
+namespace JwtAuthenticationExample
+{
+    public class AuthService
+    {
+        private readonly IConfiguration _configuration;
+
+        public AuthService(IConfiguration configuration)
+        {
+            _configuration = configuration;
+        }
+
+        // Мокована перевірка логіну та паролю
+        public bool Authenticate(string username, string password)
+        {
+            // Для прикладу, порівнюємо з фіксованими значеннями
+            return username == "user" && password == "password123";
+        }
+
+        // Генерація JWT токену
+        public string GenerateJwtToken(string username)
+        {
+            var claims = new List<Claim>
+            {
+                new Claim(ClaimTypes.Name, username)
+            };
+
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:SecretKey"]));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+            var token = new JwtSecurityToken(
+                issuer: _configuration["Jwt:Issuer"],
+                audience: _configuration["Jwt:Audience"],
+                claims: claims,
+                expires: DateTime.Now.AddHours(1),
+                signingCredentials: creds
+            );
+
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+
+        internal bool Authenticate(object username, object password)
+        {
+            throw new NotImplementedException();
+        }
+
+        internal bool Authenticate(object username, string password)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    [ApiController]
+    [Route("api/[controller]")]
+    public class AuthController : ControllerBase
+    {
+        private readonly AuthService _authService;
+
+        public AuthController(AuthService authService)
+        {
+            _authService = authService;
+        }
+
+        [HttpPost("login")]
+        public ActionResult Login([FromBody] LoginModel loginModel)
+        {
+            if (_authService.Authenticate(loginModel.Username, loginModel.Password))
+            {
+                var token = _authService.GenerateJwtToken(loginModel.Username);
+                return Ok(new { Token = token });
+            }
+            else
+            {
+                return Unauthorized("Invalid username or password");
+            }
+        }
+    }
+
+    public class LoginModel
+    {
+        public string username { get; set; }
+        public string Username { get; internal set; }
+        public string sassword { get; set; }
+        public string Password { get; internal set; }
+    }
+
+    public class Program
+    {
+        public static void Main(string[] args)
+        {
+            var builder = WebApplication.CreateBuilder(args);
+
+            // Налаштування JWT
+            builder.Services.AddSingleton<AuthService>();
+            builder.Services.AddControllers();
+
+            builder.Services.AddAuthentication("Bearer")
+                .AddJwtBearer(options =>
+                {
+                    options.TokenValidationParameters = new TokenValidationParameters
+                    {
+                        ValidateIssuer = true,
+                        ValidateAudience = true,
+                        ValidateLifetime = true,
+                        ValidIssuer = builder.Configuration["Jwt:Issuer"],
+                        ValidAudience = builder.Configuration["Jwt:Audience"],
+                        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:SecretKey"]))
+                    };
+                });
+
+            var app = builder.Build();
+
+            app.UseAuthentication();
+            app.UseAuthorization();
+
+            app.MapControllers();
+
+            app.Run();
+        }
+    }
+}
